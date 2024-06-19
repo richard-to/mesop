@@ -59,6 +59,14 @@ def dataclass_with_defaults(cls: Type[C]) -> Type[C]:
   return dataclass(cls)
 
 
+def serialize_states(states):
+  return json.dumps(map(asdict, states), cls=MesopJSONEncoder)
+
+
+def deserialize_states(states):
+  return json.dumps(map(asdict, states), cls=MesopJSONEncoder)
+
+
 def serialize_dataclass(state: Any):
   if is_dataclass(state):
     json_str = json.dumps(asdict(state), cls=MesopJSONEncoder)

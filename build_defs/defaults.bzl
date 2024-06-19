@@ -108,3 +108,11 @@ THIRD_PARTY_PY_PANDAS = [
 THIRD_PARTY_PY_DEEPDIFF = [
     requirement("deepdiff"),
 ]
+
+THIRD_PARTY_PY_DOTENV = [
+    requirement("python-dotenv"),
+]
+
+THIRD_PARTY_PY_REDIS = [
+    requirement("redis"),
+]

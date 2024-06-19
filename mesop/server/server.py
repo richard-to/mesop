@@ -3,7 +3,7 @@ import time
 import urllib.parse as urlparse
 from typing import Generator, Sequence
 
-from flask import Flask, Response, abort, request, stream_with_context
+from flask import Flask, Response, abort, request, session, stream_with_context
 
 import mesop.protos.ui_pb2 as pb
 from mesop.component_helpers import diff_component
@@ -12,6 +12,7 @@ from mesop.editor.editor_handler import handle_editor_event
 from mesop.events import LoadEvent
 from mesop.exceptions import format_traceback
 from mesop.runtime import runtime
+from mesop.server.config import config
 from mesop.warn import warn
 
 LOCALHOSTS = (
@@ -35,6 +36,7 @@ def configure_flask_app(
   *, prod_mode: bool = True, exceptions_to_propagate: Sequence[type] = ()
 ) -> Flask:
   flask_app = Flask(__name__)
+  flask_app.secret_key = config.secret_key
 
   def render_loop(
     path: str,
@@ -121,12 +123,21 @@ def configure_flask_app(
             yield from render_loop(path=ui_request.path, init_request=True)
         else:
           yield from render_loop(path=ui_request.path, init_request=True)
+        runtime().context().save_state_to_session(
+          session.get("state_session_id")
+        )
         yield create_update_state_event()
         yield STREAM_END
       elif ui_request.HasField("user_event"):
         event = ui_request.user_event
         runtime().context().set_viewport_size(event.viewport_size)
-        runtime().context().update_state(event.states)
+        if "state_session_id" in session:
+          runtime().context().restore_state_from_session(
+            session.get("state_session_id")
+          )
+        else:
+          runtime().context().update_state(event.states)
+
         for _ in render_loop(path=ui_request.path, trace_mode=True):
           pass
         if ui_request.user_event.handler_id:
@@ -176,6 +187,9 @@ def configure_flask_app(
           yield from render_loop(path=path)
           runtime().context().set_previous_node_from_current_node()
           runtime().context().reset_current_node()
+        runtime().context().save_state_to_session(
+          session.get("state_session_id")
+        )
         yield create_update_state_event(diff=True)
         yield STREAM_END
       elif ui_request.HasField("editor_event"):
