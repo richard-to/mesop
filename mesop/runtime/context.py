@@ -13,6 +13,7 @@ from mesop.exceptions import (
   MesopDeveloperException,
   MesopException,
 )
+from mesop.state_session import state_session
 
 FLAGS = flags.FLAGS
 
@@ -146,6 +147,12 @@ Did you forget to decorate your state class `{state.__name__}` with @stateclass?
     ):
       states.states.append(pb.State(data=diff_state(previous_state, state)))
     return states
+
+  def restore_state_from_session(self, state_hash: str):
+    state_session.restore(state_hash, self._states)
+
+  def save_state_to_session(self) -> str:
+    return state_session.save(self._states)
 
   def update_state(self, states: pb.States) -> None:
     for state, previous_state, proto_state in zip(

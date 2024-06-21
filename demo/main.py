@@ -55,6 +55,8 @@ import tooltip as tooltip
 import uploader as uploader
 import video as video
 
+me.configure_state(backend="memory")
+
 
 @dataclass
 class Example:

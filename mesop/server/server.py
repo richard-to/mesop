@@ -11,6 +11,7 @@ from mesop.editor.component_configs import get_component_configs
 from mesop.events import LoadEvent
 from mesop.exceptions import format_traceback
 from mesop.runtime import runtime
+from mesop.state_session.state_session import config
 from mesop.warn import warn
 
 LOCALHOSTS = (
@@ -34,6 +35,8 @@ def configure_flask_app(
   *, prod_mode: bool = True, exceptions_to_propagate: Sequence[type] = ()
 ) -> Flask:
   flask_app = Flask(__name__)
+  flask_app.secrety_key = config.secret_key
+  print("SECRET", flask_app.secret_key)
 
   def render_loop(
     path: str,
@@ -250,6 +253,8 @@ def create_update_state_event(diff: bool = False) -> str:
   Returns:
     serialized `pb.UiResponse`
   """
+  # state_hash = runtime().context().save_state_to_session()
+
   if diff:
     return serialize(
       pb.UiResponse(

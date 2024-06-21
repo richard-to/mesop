@@ -51,6 +51,7 @@ py_library(
         "//mesop/commands",
         "//mesop/features",
         "//mesop/server",
+        "//mesop/state_session",
     ],
 )
 
