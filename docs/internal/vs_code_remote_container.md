@@ -29,10 +29,6 @@ You can follow the instructions here on [how to fork and clone a Github reposito
 
 ## Open folder in container
 
-> It is not recommended to develop locally and on remote containers using the same
-folder since this may cause conflicts with Bazel. Instead you should clone the
-repository in a separate directory.
-
 Open VS Code, press `Cmd/Ctrl + Shift + P`, and select the `Dev Containers: Open Folder in Container...`
 option. This will create a new workspace inside a remote container.
 
