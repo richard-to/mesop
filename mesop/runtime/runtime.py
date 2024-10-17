@@ -5,6 +5,7 @@ from typing import Any, Callable, Generator, Type, TypeVar, cast
 from flask import g
 
 import mesop.protos.ui_pb2 as pb
+from mesop.configuration.app_settings import AppSettings, StaticFolder
 from mesop.events import LoadEvent, MesopEvent
 from mesop.exceptions import MesopDeveloperException, MesopUserException
 from mesop.key import Key
@@ -54,6 +55,7 @@ class Runtime:
     self._state_classes: list[type[Any]] = []
     self._loading_errors: list[pb.ServerError] = []
     self._has_served_traffic = False
+    self._app_settings: AppSettings | None = None
 
   def context(self) -> Context:
     if "_mesop_context" not in g:
@@ -113,6 +115,24 @@ Try one of the following paths:
                                      """
       )
     self._path_to_page_config[path].page_fn()
+
+  def configure_app(self, app_settings: AppSettings):
+    """Configures global Mesop app settings."""
+    if self._has_served_traffic:
+      raise MesopDeveloperException(
+        "Cannot configure an app after traffic has been served. You must configure your app upon server startup before any traffic has been served. This prevents security issues."
+      )
+    if self._app_settings is not None:
+      raise MesopDeveloperException(
+        "App settings have already been configured and cannot be updated."
+      )
+    self._app_settings = deepcopy(app_settings)
+
+  def static_folder(self) -> StaticFolder | None:
+    """Gets the static folder if one was specified in app settings."""
+    if self._app_settings is None:
+      return None
+    return self._app_settings.static_folder
 
   def register_page(self, *, path: str, page_config: PageConfig) -> None:
     if self._has_served_traffic:

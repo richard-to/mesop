@@ -11,6 +11,7 @@ py_library(
         exclude = ["*_test.py"],
     ),
     deps = [
+        "//mesop/configuration:app_settings",
         "//mesop/runtime",
     ],
 )

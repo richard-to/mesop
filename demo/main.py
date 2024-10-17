@@ -241,6 +241,13 @@ def load_home_page(e: me.LoadEvent):
   yield
 
 
+me.configure_app(
+  me.AppSettings(
+    static_folder=me.StaticFolder(dir_path="static", url_path="static/")
+  )
+)
+
+
 @me.page(
   title="Mesop Demos",
   security_policy=me.SecurityPolicy(

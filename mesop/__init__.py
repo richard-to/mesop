@@ -181,6 +181,8 @@ from mesop.components.uploader.uploader import (
 )
 from mesop.components.uploader.uploader import uploader as uploader
 from mesop.components.video.video import video as video
+from mesop.configuration.app_settings import AppSettings as AppSettings
+from mesop.configuration.app_settings import StaticFolder as StaticFolder
 from mesop.dataclass_utils import dataclass_with_defaults
 from mesop.events import (
   ClickEvent as ClickEvent,
@@ -204,6 +206,7 @@ from mesop.exceptions import (
   MesopUserException as MesopUserException,
 )
 from mesop.features import page as page
+from mesop.features.configure_app import configure_app as configure_app
 from mesop.features.query_params import query_params as query_params
 from mesop.features.theme import set_theme_density as set_theme_density
 from mesop.features.theme import set_theme_mode as set_theme_mode

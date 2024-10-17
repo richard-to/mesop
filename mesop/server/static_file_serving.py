@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from flask import Flask, Response, g, make_response, request, send_file
 from werkzeug.security import safe_join
 
+from mesop.configuration.app_settings import StaticFolder
 from mesop.exceptions import MesopException
 from mesop.runtime import runtime
 from mesop.server.constants import WEB_COMPONENTS_PATH_SEGMENT
@@ -117,6 +118,21 @@ def configure_static_file_serving(
   @app.route("/<path:path>")
   def serve_file(path: str):
     preprocess_request()
+
+    static_folder = runtime().static_folder()
+    print(static_folder, path)
+    if (
+      is_file_path(path)
+      and static_folder
+      and path.startswith(static_folder.url_path)
+    ):
+      print("SDSDFSD")
+      static_file_path = convert_static_url_to_static_dir(path, static_folder)
+      if static_file_path:
+        return send_file_compressed(
+          static_file_path, disable_gzip_cache=disable_gzip_cache
+        )
+
     if is_file_path(path):
       return send_file_compressed(
         get_path(path),
@@ -334,3 +350,22 @@ def extract_origin(livereload_script_url: str) -> str | None:
     return match.group()
   # If we couldn't extract an origin, return None
   return None
+
+
+def convert_static_url_to_static_dir(
+  path: str, static_folder: StaticFolder
+) -> str | None:
+  """Converts static URL path to static directory path."""
+  file_path = safe_join(
+    static_folder.dir_path, path[len(static_folder.url_path) :]
+  )
+  if not file_path:
+    return None
+  print(file_path)
+  print(get_runfile_location(file_path))
+
+  return (
+    get_runfile_location(file_path)
+    if has_runfiles()
+    else safe_join(os.getcwd(), file_path)
+  )

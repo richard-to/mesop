@@ -5,6 +5,14 @@ Example Tailwind command:
 npx tailwindcss -i ./tailwind_input.css -o ./tailwind.css
 ```
 
+Example tailwind_input.css
+
+```
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+```
+
 Example Tailwind config:
 
 ```
@@ -83,11 +91,7 @@ import mesop as me
     allowed_iframe_parents=["https://google.github.io"]
   ),
   stylesheets=[
-    # Specify your Tailwind CSS URL here.
-    #
-    # For local testing, you can just launch a basic Python HTTP server:
-    #   python -m http.server 8000
-    "http://localhost:8000/assets/tailwind.css",
+    "/static/tailwind.css",
   ],
   path="/tailwind",
 )
