@@ -3,10 +3,11 @@ import time
 from flask import Flask, Response, request
 
 from mesop.runtime import runtime
+from mesop.server.server_utils import prefix_base_url
 
 
 def configure_debug_routes(flask_app: Flask):
-  @flask_app.route("/__hot-reload__")
+  @flask_app.route(prefix_base_url("/__hot-reload__"))
   def hot_reload() -> Response:
     counter = int(request.args["counter"])
     while True:

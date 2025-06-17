@@ -270,6 +270,10 @@ By default, this is not enabled. You can enable this by setting it to `true`.
 
 This is the base path used to resolve other paths, particularly for serving static files. Must be an absolute path. This is rarely needed because the default of using the current working directory is usually sufficient.
 
+### MESOP_BASE_URL_PATH
+
+Base URL path for serving the Mesop application. Set this if your app is served from a non-root path (e.g. `/myapp`). All HTTP routes, static assets, and API calls will be prefixed with this path. The value must start with a slash but should not include a trailing slash.
+
 ### MESOP_HTTP_CACHE_JS_BUNDLE
 
 Enables HTTP caching for the main JS bundle (i.e. prod_bundle.js) served by Mesop. This minimizes unnecessary HTTP requests for the JS bundle.

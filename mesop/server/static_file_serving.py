@@ -15,6 +15,7 @@ from flask import Flask, Response, g, make_response, request, send_file
 from werkzeug.security import safe_join
 
 from mesop.env.env import (
+  MESOP_BASE_URL_PATH,
   MESOP_HTTP_CACHE_JS_BUNDLE,
   MESOP_WEB_COMPONENTS_HTTP_CACHE_KEY,
   MESOP_WEBSOCKETS_ENABLED,
@@ -23,7 +24,11 @@ from mesop.env.env import (
 from mesop.exceptions import MesopException
 from mesop.runtime import runtime
 from mesop.server.constants import WEB_COMPONENTS_PATH_SEGMENT
-from mesop.server.server_utils import get_favicon
+from mesop.server.server_utils import (
+  get_favicon,
+  prefix_base_url,
+  remove_base_url_path,
+)
 from mesop.utils import terminal_colors as tc
 from mesop.utils.runfiles import get_runfile_location, has_runfiles
 from mesop.utils.url_utils import sanitize_url_for_csp
@@ -57,7 +62,9 @@ def configure_static_file_serving(
       prod_bundle_hash = hashlib.md5(f.read()).hexdigest()
 
   def retrieve_index_html() -> io.BytesIO | str:
-    page_config = runtime().get_page_config(path=request.path)
+    page_config = runtime().get_page_config(
+      path=remove_base_url_path(request.path)
+    )
     file_path = get_path("index.html")
     with open(file_path) as file:
       lines = file.readlines()
@@ -65,6 +72,9 @@ def configure_static_file_serving(
     for i, line in enumerate(lines):
       if "$$INSERT_CSP_NONCE$$" in line:
         lines[i] = lines[i].replace("$$INSERT_CSP_NONCE$$", g.csp_nonce)
+      if "<base href=" in line:
+        base_href = prefix_base_url("/")
+        lines[i] = re.sub(r'base href=".*?"', f'base href="{base_href}"', line)
       if (
         livereload_script_url
         and line.strip() == "<!-- Inject livereload script (if needed) -->"
@@ -97,6 +107,7 @@ def configure_static_file_serving(
         lines[i] = f"""
           <script nonce="{g.csp_nonce}">
             window.__MESOP_EXPERIMENTS__ = {json.dumps(experiment_settings)};
+            window.__MESOP_BASE_URL_PATH__ = '{MESOP_BASE_URL_PATH}';
           </script>
         """
       if '<script src="prod_bundle.js"' in line and prod_bundle_hash:
@@ -111,19 +122,19 @@ def configure_static_file_serving(
 
     return binary_file
 
-  @app.route("/")
+  @app.route(prefix_base_url("/"), strict_slashes=False)
   def serve_root():
     preprocess_request()
     return send_file(retrieve_index_html(), download_name="index.html")
 
-  @app.route("/sandbox_iframe.html")
+  @app.route(prefix_base_url("/sandbox_iframe.html"))
   def serve_sandbox_iframe():
     preprocess_request()
     return send_file(
       get_path("sandbox_iframe.html"), download_name="sandbox_iframe.html"
     )
 
-  @app.route(f"/{WEB_COMPONENTS_PATH_SEGMENT}/<path:path>")
+  @app.route(prefix_base_url(f"/{WEB_COMPONENTS_PATH_SEGMENT}/<path:path>"))
   def serve_web_components(path: str):
     if not is_file_path(path):
       raise MesopException("Unexpected request to " + path)
@@ -148,7 +159,7 @@ def configure_static_file_serving(
       disable_gzip_cache=disable_gzip_cache,
     )
 
-  @app.route("/<path:path>")
+  @app.route(prefix_base_url("/<path:path>"))
   def serve_file(path: str):
     preprocess_request()
     if is_file_path(path):
@@ -159,7 +170,7 @@ def configure_static_file_serving(
     else:
       return send_file(retrieve_index_html(), download_name="index.html")
 
-  @app.route("/__csp__", methods=["POST"])
+  @app.route(prefix_base_url("/__csp__"), methods=["POST"])
   def csp_report():
     # Get the CSP violation report from the request
     # Flask expects the MIME type to be application/json
@@ -222,7 +233,9 @@ def configure_static_file_serving(
 
   @app.after_request
   def add_security_headers(response: Response):
-    page_config = runtime().get_page_config(path=request.path)
+    page_config = runtime().get_page_config(
+      path=remove_base_url_path(request.path)
+    )
     # Set X-Content-Type-Options header to prevent MIME type sniffing
     response.headers["X-Content-Type-Options"] = "nosniff"
 
@@ -254,7 +267,7 @@ def configure_static_file_serving(
         # https://angular.io/guide/security#enforcing-trusted-types
         "trusted-types": "angular angular#unsafe-bypass lit-html highlight.js",
         "require-trusted-types-for": "'script'",
-        "report-uri": "/__csp__",
+        "report-uri": prefix_base_url("/__csp__"),
       }
     )
     if page_config and page_config.stylesheets:
@@ -326,7 +339,7 @@ def configure_static_file_serving(
         else:
           csp["connect-src"] = f"'self' {livereload_origin}"
 
-    if request.path == "/sandbox_iframe.html":
+    if request.path == prefix_base_url("/sandbox_iframe.html"):
       # Set a minimal CSP to not restrict Mesop app developers.
       # Need frame-ancestors to ensure other sites do not iframe
       # this page and exploit it.
@@ -346,14 +359,16 @@ def configure_static_file_serving(
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
     if (
-      request.path == "/prod_bundle.js"
+      request.path == prefix_base_url("/prod_bundle.js")
       and request.args.get("v") == prod_bundle_hash
       and not runtime().debug_mode
       and MESOP_HTTP_CACHE_JS_BUNDLE
     ):
       response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     if (
-      request.path.startswith(f"/{WEB_COMPONENTS_PATH_SEGMENT}/")
+      request.path.startswith(
+        prefix_base_url(f"/{WEB_COMPONENTS_PATH_SEGMENT}/")
+      )
       and not runtime().debug_mode
       and MESOP_WEB_COMPONENTS_HTTP_CACHE_KEY
       and request.args.get("v") == MESOP_WEB_COMPONENTS_HTTP_CACHE_KEY

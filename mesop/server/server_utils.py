@@ -3,17 +3,37 @@ import json
 import os
 import secrets
 import urllib.parse as urlparse
-from typing import Any, Generator, Iterable
+from collections.abc import Generator, Iterable
+from typing import Any
 from urllib import request as urllib_request
 
 from flask import Response
 from werkzeug.security import safe_join
 
 import mesop.protos.ui_pb2 as pb
-from mesop.env.env import get_app_base_path
+from mesop.env.env import MESOP_BASE_URL_PATH, get_app_base_path
 from mesop.exceptions import MesopDeveloperException
 from mesop.runtime import runtime
 from mesop.server.config import app_config
+
+
+def prefix_base_url(path: str) -> str:
+  base = MESOP_BASE_URL_PATH
+  if not path.startswith("/"):
+    path = "/" + path
+  return base + path if base else path
+
+
+def remove_base_url_path(path: str) -> str:
+  base = MESOP_BASE_URL_PATH
+  if base and path.startswith(base):
+    path = path[len(base) :]
+    if not path:
+      return "/"
+    if not path.startswith("/"):
+      path = "/" + path
+  return path
+
 
 LOCALHOSTS = (
   # For IPv4 localhost
@@ -159,7 +179,7 @@ def get_static_url_path() -> str | None:
   if not static_url_path.endswith("/"):
     static_url_path += "/"
 
-  return static_url_path
+  return prefix_base_url(static_url_path)
 
 
 def get_favicon() -> str | None:

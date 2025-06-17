@@ -23,11 +23,21 @@ if MESOP_APP_BASE_PATH:
       f"MESOP_APP_BASE_PATH is not a valid directory: {MESOP_APP_BASE_PATH}"
     )
 
+MESOP_BASE_URL_PATH = os.environ.get("MESOP_BASE_URL_PATH", "").strip()
+if MESOP_BASE_URL_PATH:
+  if not MESOP_BASE_URL_PATH.startswith("/"):
+    raise MesopDeveloperException("MESOP_BASE_URL_PATH must start with a slash")
+  MESOP_BASE_URL_PATH = MESOP_BASE_URL_PATH.rstrip("/")
+
 
 def get_app_base_path() -> str:
   if not MESOP_APP_BASE_PATH:
     return os.getcwd()
   return MESOP_APP_BASE_PATH
+
+
+def get_base_url_path() -> str:
+  return MESOP_BASE_URL_PATH
 
 
 MESOP_PROD_UNREDACTED_ERRORS = (

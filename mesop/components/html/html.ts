@@ -15,6 +15,7 @@ import {
 import {HtmlType} from 'mesop/mesop/components/html/html_jspb_proto_pb/mesop/components/html/html_pb';
 import {formatStyle} from '../../web/src/utils/styles';
 import {setIframeSrc} from '../../web/src/safe_iframe/safe_iframe';
+import {prefixBasePath} from '../../web/src/utils/base_path';
 
 @Component({
   selector: 'mesop-html',
@@ -70,7 +71,7 @@ export class HtmlComponent {
     }
 
     const iframe = this.iframe.nativeElement as HTMLIFrameElement;
-    setIframeSrc(iframe, '/sandbox_iframe.html');
+    setIframeSrc(iframe, prefixBasePath('/sandbox_iframe.html'));
     iframe.onload = () => {
       iframe.contentWindow!.postMessage(
         {

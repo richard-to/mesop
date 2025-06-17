@@ -14,6 +14,7 @@ import {
 } from 'mesop/mesop/protos/ui_jspb_proto_pb/mesop/protos/ui_pb';
 import {Title} from '@angular/platform-browser';
 import {SSE} from '../utils/sse';
+import {prefixBasePath} from '../utils/base_path';
 import {applyComponentDiff, applyStateDiff} from '../utils/diff';
 import {getViewportSize} from '../utils/viewport_size';
 import {ThemeService} from './theme_service';
@@ -130,7 +131,7 @@ export class Channel {
   }
 
   private initSSE(initParams: InitParams, request: UiRequest) {
-    this.eventSource = new SSE('/__ui__', {
+    this.eventSource = new SSE(prefixBasePath('/__ui__'), {
       payload: generatePayloadString(request),
     });
     this.status = ChannelStatus.OPEN;
@@ -173,7 +174,9 @@ export class Channel {
     }
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/__ui__`;
+    const wsUrl = `${wsProtocol}//${window.location.host}${prefixBasePath(
+      '/__ui__',
+    )}`;
 
     this.webSocket = new WebSocket(wsUrl);
     this.status = ChannelStatus.OPEN;
@@ -475,7 +478,7 @@ export class Channel {
     const pollHotReloadEndpoint = async () => {
       try {
         const response = await fetch(
-          `/__hot-reload__?counter=${this.hotReloadCounter}`,
+          prefixBasePath(`/__hot-reload__?counter=${this.hotReloadCounter}`),
         );
         if (response.status === 200) {
           const text = await response.text();
@@ -546,7 +549,12 @@ function createDeferred<T = void>(): {
 }
 
 function generatePayloadString(request: UiRequest): string {
-  request.setPath(window.location.pathname);
+  let path = window.location.pathname;
+  const base = (window as any).__MESOP_BASE_URL_PATH__ as string | undefined;
+  if (base && path.startsWith(base)) {
+    path = path.slice(base.length) || '/';
+  }
+  request.setPath(path);
   const array = request.serializeBinary();
   const byteString = btoa(fromUint8Array(array))
     // Make this URL-safe:

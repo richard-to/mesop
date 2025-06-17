@@ -17,6 +17,7 @@ import mesop.protos.ui_pb2 as pb
 from mesop.component_helpers import diff_component
 from mesop.env.env import (
   MESOP_APP_BASE_PATH,
+  MESOP_BASE_URL_PATH,
   MESOP_PROD_UNREDACTED_ERRORS,
   MESOP_WEBSOCKETS_ENABLED,
 )
@@ -32,12 +33,13 @@ from mesop.server.server_utils import (
   get_static_url_path,
   is_same_site,
   make_sse_response,
+  prefix_base_url,
   serialize,
 )
 from mesop.utils.url_utils import remove_url_query_param
 from mesop.warn import warn
 
-UI_PATH = "/__ui__"
+UI_PATH = prefix_base_url("/__ui__")
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,8 @@ def configure_flask_app(
 
   if MESOP_APP_BASE_PATH:
     logger.info(f"MESOP_APP_BASE_PATH set to {MESOP_APP_BASE_PATH}")
+  if MESOP_BASE_URL_PATH:
+    logger.info(f"MESOP_BASE_URL_PATH set to {MESOP_BASE_URL_PATH}")
 
   if MESOP_PROD_UNREDACTED_ERRORS and prod_mode:
     logger.info(
