@@ -20,7 +20,7 @@ class State:
   prompt_tab: bool = True
   response_tab: bool = True
   # Model configs
-  selected_model: str = "gemini-1.5"
+  selected_model: str = "gemini-2.5"
   selected_region: str = "us-east4"
   temperature: float = 1.0
   temperature_for_input: float = 1.0
@@ -128,7 +128,7 @@ def page():
     with me.box(style=_STYLE_CONFIG_COLUMN):
       me.select(
         options=[
-          me.SelectOption(label="Gemini 1.5", value="gemini-1.5"),
+          me.SelectOption(label="Gemini 2.5", value="gemini-2.5"),
           me.SelectOption(label="Chat-GPT Turbo", value="gpt-3.5-turbo"),
         ],
         label="Model",

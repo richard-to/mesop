@@ -141,7 +141,7 @@ if me.runtime().is_hot_reload_in_progress:
 
 else:
   index, bm25_retriever = build_or_load_index()
-  llm = Gemini(model="models/gemini-1.5-flash-latest")
+  llm = Gemini(model="models/gemini-flash-latest")
   retriever = QueryFusionRetriever(
     [
       index.as_retriever(similarity_top_k=5),
