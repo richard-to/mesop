@@ -63,7 +63,7 @@ Prioritize accuracy and completeness while minimizing token usage. Preserve code
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))  # type: ignore
 
-model = genai.GenerativeModel("gemini-1.5-flash-latest")
+model = genai.GenerativeModel("gemini-flash-latest")
 
 
 def generate_refined_text(content: str):
