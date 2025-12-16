@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Callable
 from unittest.mock import patch
 
@@ -11,9 +12,11 @@ from mesop.component_helpers.helper import (
   UnnamedSlot,
   _UserCompositeComponent,
   check_property_keys_is_safe,
+  register_event_handler,
   slot,
   slotclass,
 )
+from mesop.events import MesopEvent
 from mesop.exceptions import MesopDeveloperException
 from mesop.runtime.context import NodeTreeState
 from mesop.runtime.runtime import Runtime
@@ -306,6 +309,40 @@ def test_user_composite_component_named_with_extra_named_slot(app):
       _UserCompositeComponent(
         named_component_with_missing_slot, named_slots_cls=TestSlot
       )
+
+
+@dataclass(kw_only=True)
+class FakeBlurEvent(MesopEvent):
+  """Test blur event."""
+
+  value: str
+
+
+@dataclass(kw_only=True)
+class FakeSelectEvent(MesopEvent):
+  """Test select event."""
+
+  values: list[str]
+
+
+@pytest.mark.usefixtures("runtime")
+def test_event_handler_registers_different_handler_id_based_on_event_type(app):
+  """Test that the same handler can be registered with different event types."""
+  with app.app_context():
+
+    def shared_handler(event):
+      pass
+
+    blur_handler_id = register_event_handler(
+      shared_handler, event=FakeBlurEvent
+    )
+    select_handler_id = register_event_handler(
+      shared_handler, event=FakeSelectEvent
+    )
+
+    assert (
+      blur_handler_id != select_handler_id
+    ), "Handler IDs should be different for different event types"
 
 
 if __name__ == "__main__":
