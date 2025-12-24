@@ -11,7 +11,7 @@ import {
   ErrorDialogService,
 } from '../services/error_dialog_service';
 import {Shell, registerComponentRendererElement} from '../shell/shell';
-import {isMac} from '../utils/platform';
+import {isMac, isChromeOS} from '../utils/platform';
 import {Channel} from '../services/channel';
 // Keep the following comment to ensure there's a hook for adding TS imports in the downstream sync.
 // ADD_TS_IMPORT_HERE
@@ -31,20 +31,34 @@ class Editor {
 
   @HostListener('window:keydown', ['$event'])
   handleKeyDown(event: KeyboardEvent) {
-    // Hotkey for hot reload
-    //
-    // Binds:
-    // cmd + shift + r (MacOs)
-    // ctrl + shift + r (Other platforms)
-    if (
-      event.key === 'r' &&
-      (isMac() ? event.metaKey : event.ctrlKey) &&
-      event.shiftKey
-    ) {
+    if (this.shouldReload(event)) {
       this.channel.hotReload();
       event.preventDefault();
-      return;
     }
+  }
+
+  /**
+   * Determines if the hot reload keyboard shortcut was triggered.
+   *
+   * Hotkey mappings:
+   * - MacOS: cmd + shift + r
+   * - ChromeOS: alt + shift + r (to avoid conflict with browser's hard reload)
+   * - Other platforms: ctrl + shift + r
+   */
+  private shouldReload(event: KeyboardEvent): boolean {
+    if (event.key !== 'r' || !event.shiftKey) {
+      return false;
+    }
+
+    if (isMac()) {
+      return event.metaKey;
+    }
+
+    if (isChromeOS()) {
+      return event.altKey;
+    }
+
+    return event.ctrlKey;
   }
 }
 
