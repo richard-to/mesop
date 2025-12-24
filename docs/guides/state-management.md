@@ -94,6 +94,201 @@ You **MUST** use immutable default values _or_ use dataclasses `field` initializ
 
 Under the hood, Mesop is sending the state back and forth between the server and browser client so everything in a state class must be serializable.
 
+## Serialization
+
+Understanding what can and cannot be serialized in Mesop state is critical to avoiding runtime errors. This section explains which types are supported and provides guidance on handling complex objects.
+
+### Serializable Types
+
+Mesop supports serialization for the following types:
+
+#### Primitive Types
+- `int` - Integer numbers
+- `float` - Floating-point numbers
+- `str` - Strings
+- `bool` - Boolean values
+
+```python
+@me.stateclass
+class State:
+  count: int
+  temperature: float
+  name: str
+  is_enabled: bool
+```
+
+#### Collections
+- `list[T]` - Lists (including nested lists)
+- `dict[K, V]` - Dictionaries (including nested dicts)
+- `set[T]` - Sets
+
+```python
+@me.stateclass
+class State:
+  items: list[str]
+  scores: dict[str, int]
+  unique_ids: set[int]
+  nested_list: list[list[str]]
+  nested_dict: dict[str, dict[str, bool]]
+```
+
+#### Date and Time
+- `datetime.datetime` - Date and time objects
+- `datetime.date` - Date objects
+
+```python
+from datetime import datetime, date
+
+@me.stateclass
+class State:
+  created_at: datetime
+  birthday: date
+```
+
+#### Binary Data
+- `bytes` - Binary data
+
+```python
+@me.stateclass
+class State:
+  file_content: bytes
+```
+
+#### Special Types
+- `pandas.DataFrame` - Pandas DataFrames (requires pandas to be installed)
+- `pydantic.BaseModel` - Pydantic models and subclasses
+- `mesop.components.uploader.UploadedFile` - Uploaded files from the uploader component
+
+```python
+import pandas as pd
+from pydantic import BaseModel
+
+class UserModel(BaseModel):
+  name: str
+  age: int
+
+@me.stateclass
+class State:
+  data_frame: pd.DataFrame
+  user: UserModel
+```
+
+#### Nested State Classes
+You can nest dataclasses within your state class, and they will be automatically serialized:
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Address:
+  street: str
+  city: str
+
+@me.stateclass
+class State:
+  address: Address
+  addresses: list[Address]
+```
+
+### Non-Serializable Types
+
+Most types that are not in the serializable types list above cannot be serialized. This includes (but is not limited to):
+
+- Functions, lambdas, and methods
+- File handles, sockets, and I/O objects
+- Database connections and cursors
+- Thread and lock objects
+- Protocol buffers and custom complex objects
+
+**If you get a serialization error**, refer to the [serializable types](#serializable-types) section above for supported types.
+
+### Workarounds for Unsupported Types
+
+If you need to work with types that aren't directly serializable, here are some strategies:
+
+#### 1. Break down into primitives
+
+Extract the data you need into serializable primitive types:
+
+```python
+# ❌ Bad: storing complex object
+@me.stateclass
+class State:
+  api_response: requests.Response  # Not serializable
+
+# ✅ Good: extract the data you need
+@me.stateclass
+class State:
+  response_text: str
+  status_code: int
+  headers: dict[str, str]
+
+def on_click(e: me.ClickEvent):
+  state = me.state(State)
+  response = requests.get("https://api.example.com")
+  state.response_text = response.text
+  state.status_code = response.status_code
+  state.headers = dict(response.headers)
+```
+
+#### 2. Serialize to JSON or bytes
+
+Convert complex objects to JSON strings or bytes:
+
+```python
+@me.stateclass
+class State:
+  config_json: str  # Store as JSON string
+
+def on_load(e: me.LoadEvent):
+  state = me.state(State)
+  complex_config = load_complex_config()
+  state.config_json = json.dumps(complex_config)
+
+def use_config():
+  state = me.state(State)
+  config = json.loads(state.config_json)
+  # Use config...
+```
+
+#### 3. Use Pydantic models
+
+Pydantic models are serializable and can handle complex nested structures:
+
+```python
+from pydantic import BaseModel
+
+class UserProfile(BaseModel):
+  name: str
+  email: str
+  settings: dict[str, str]
+  created_at: datetime
+
+@me.stateclass
+class State:
+  profile: UserProfile  # Pydantic models are serializable
+
+def on_login(e: me.ClickEvent):
+  state = me.state(State)
+  # Pydantic can serialize most Python types
+  state.profile = UserProfile(
+    name="Alice",
+    email="alice@example.com",
+    settings={"theme": "dark"},
+    created_at=datetime.now()
+  )
+```
+
+> **Note**: When using Pydantic models, you get less granular state diffing compared to using primitives directly. This is fine if you don't store a large amount of state data.
+
+### Known Issues
+
+Be aware of these known serialization limitations:
+
+- https://github.com/mesop-dev/mesop/issues/565
+- https://github.com/mesop-dev/mesop/issues/659
+- https://github.com/mesop-dev/mesop/issues/814
+
 ## Multiple state classes
 
 You can use multiple classes to store state for the current user session.
