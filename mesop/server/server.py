@@ -2,6 +2,7 @@ import base64
 import logging
 import secrets
 import threading
+import types
 from typing import Generator, Sequence
 
 from flask import (
@@ -36,12 +37,25 @@ from mesop.server.server_utils import (
   prefix_base_url,
   serialize,
 )
+from mesop.utils.async_utils import run_async_generator, run_coroutine
 from mesop.utils.url_utils import remove_url_query_param
 from mesop.warn import warn
 
 UI_PATH = prefix_base_url("/__ui__")
 
 logger = logging.getLogger(__name__)
+
+
+def _process_on_load_result(result) -> Generator[None, None, None]:
+  """Process on_load result, handling sync generators, async generators, and coroutines."""
+  if result is not None:
+    if isinstance(result, types.AsyncGeneratorType):
+      yield from run_async_generator(result)
+    elif isinstance(result, types.CoroutineType):
+      yield run_coroutine(result)
+    else:
+      # Regular generator
+      yield from result
 
 
 def configure_flask_app(
@@ -172,9 +186,9 @@ def configure_flask_app(
             )
           )
           # on_load is a generator function then we need to iterate through
-          # the generator object.
+          # the generator object. This also handles async generators and coroutines.
           if result:
-            for _ in result:
+            for _ in _process_on_load_result(result):
               yield from render_loop(path=ui_request.path, init_request=True)
               runtime().context().set_previous_node_from_current_node()
               runtime().context().reset_current_node()
@@ -277,9 +291,9 @@ def configure_flask_app(
     assert page_config and page_config.on_load
     result = page_config.on_load(LoadEvent(path=path))
     # on_load is a generator function then we need to iterate through
-    # the generator object.
+    # the generator object. This also handles async generators and coroutines.
     if result:
-      for _ in result:
+      for _ in _process_on_load_result(result):
         yield from render_loop(path=path, init_request=True)
         runtime().context().set_previous_node_from_current_node()
         runtime().context().reset_current_node()
