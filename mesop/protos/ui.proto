@@ -228,8 +228,8 @@ message Command {
 message NavigateCommand {
     // absolute route path, e.g. "/foo/bar"
     optional string url = 1;
-
     repeated QueryParam query_params = 2;
+    optional bool open_in_new_tab = 3;
 }
 
 message UpdateQueryParam {
