@@ -1,4 +1,9 @@
-import {Component, Inject, Injectable} from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  Inject,
+  Injectable,
+} from '@angular/core';
 import {MatButtonModule} from '@angular/material/button';
 import {
   MAT_DIALOG_DATA,
@@ -30,6 +35,7 @@ export class DebugErrorDialogService implements ErrorDialogService {
 }
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.Default,
   selector: 'mesop-error-dialog',
   template: `
     <h3 mat-dialog-title>Mesop Error</h3>
