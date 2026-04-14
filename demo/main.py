@@ -3,10 +3,12 @@
 # ruff: noqa: E402
 
 import base64
+import importlib.util
 import inspect
 import os
 import sys
-from dataclasses import dataclass
+import types
+from dataclasses import dataclass, field
 from typing import Literal
 
 import mesop as me
@@ -17,6 +19,32 @@ import mesop as me
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
   sys.path.append(current_dir)
+
+
+def _import_demo_subdir(demo_name: str) -> types.ModuleType:
+  """Load app.py from a demo subdirectory.
+
+  Adds the subdirectory to sys.path so that app.py can import its sibling
+  files (e.g. component .py/.js) without needing relative or package-qualified
+  imports.
+  """
+  subdir = os.path.join(current_dir, demo_name)
+  if subdir not in sys.path:
+    sys.path.append(subdir)
+  app_path = os.path.join(subdir, "app.py")
+  spec = importlib.util.spec_from_file_location(
+    demo_name,
+    app_path,
+  )
+  if spec is None or spec.loader is None:
+    raise ImportError(
+      f"Could not load demo module '{demo_name}' from {app_path}"
+    )
+  module = importlib.util.module_from_spec(spec)
+  sys.modules[demo_name] = module
+  spec.loader.exec_module(module)  # type: ignore[union-attr]
+  return module
+
 
 import glob
 
@@ -76,11 +104,15 @@ import tooltip as tooltip
 import uploader as uploader
 import video as video
 
+copy_to_clipboard = _import_demo_subdir("copy_to_clipboard")
+
 
 @dataclass
 class Example:
   # module_name (should also be the path name)
   name: str
+  # Additional files to show in the code viewer (relative to the demo's directory)
+  extra_files: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -208,6 +240,18 @@ COMPONENTS_SECTIONS = [
     ],
   ),
   Section(
+    name="Web Components",
+    examples=[
+      Example(
+        name="copy_to_clipboard",
+        extra_files=[
+          "copy_to_clipboard_component.py",
+          "copy_to_clipboard_component.js",
+        ],
+      ),
+    ],
+  ),
+  Section(
     name="Others",
     examples=[
       Example(name="plot"),
@@ -216,6 +260,12 @@ COMPONENTS_SECTIONS = [
 ]
 
 ALL_SECTIONS = FIRST_SECTIONS + COMPONENTS_SECTIONS
+
+ALL_EXAMPLES: dict[str, Example] = {
+  example.name: example
+  for section in ALL_SECTIONS
+  for example in section.examples
+}
 
 BORDER_SIDE = me.BorderSide(
   style="solid",
@@ -228,6 +278,10 @@ BORDER_SIDE = me.BorderSide(
 class State:
   current_demo: str
   panel_fullscreen: Literal["preview", "editor", None] = None
+  # "" on initial load/reset; the main filename (e.g. "app.py") when the user
+  # explicitly selects it; or one of the extra_files values otherwise.
+  # _get_code_for_example treats any value not in extra_files as the main file.
+  selected_file: str = ""
 
 
 screenshots: dict[str, str] = {}
@@ -357,12 +411,15 @@ def example_card(name: str):
 
 
 def on_load_embed(e: me.LoadEvent):
+  state = me.state(State)
   if me.state(ThemeState).dark_mode:
     me.set_theme_mode("dark")
   else:
     me.set_theme_mode("system")
+  me.set_theme_density(-2)
   if not is_desktop():
-    me.state(State).panel_fullscreen = "preview"
+    state.panel_fullscreen = "preview"
+  state.selected_file = ""
 
 
 def create_main_fn(example: Example):
@@ -417,7 +474,7 @@ def body(current_demo: str):
       if state.panel_fullscreen != "editor":
         demo_ui(src)
       if state.panel_fullscreen != "preview":
-        demo_code(inspect.getsource(get_module(current_demo)))
+        demo_code(ALL_EXAMPLES[current_demo])
 
 
 def demo_ui(src: str):
@@ -494,7 +551,43 @@ def toggle_fullscreen(e: me.ClickEvent):
     state.panel_fullscreen = "preview"
 
 
-def demo_code(code_arg: str):
+_LANG_MAP: dict[str, str] = {
+  "py": "python",
+  "js": "javascript",
+  "ts": "typescript",
+  "css": "css",
+  "html": "html",
+}
+
+
+def _get_code_for_example(example: Example) -> tuple[str, str]:
+  """Returns (source_code, language) for the currently selected file."""
+  state = me.state(State)
+  module = get_module(example.name)
+  if state.selected_file not in example.extra_files:
+    return inspect.getsource(module), "python"
+  module_dir = os.path.dirname(os.path.abspath(module.__file__))
+  path = os.path.abspath(os.path.join(module_dir, state.selected_file))
+  # Defense in depth: reject any path that escapes the demo's own directory,
+  # even though selected_file is already validated against the extra_files allowlist.
+  if not path.startswith(module_dir + os.sep):
+    return inspect.getsource(module), "python"
+  with open(path, encoding="utf-8") as f:
+    code = f.read()
+  ext = (
+    state.selected_file.rsplit(".", 1)[-1] if "." in state.selected_file else ""
+  )
+  return code, _LANG_MAP.get(ext, "")
+
+
+def on_file_select(e: me.SelectSelectionChangeEvent):
+  me.state(State).selected_file = e.value
+
+
+def demo_code(example: Example):
+  state = me.state(State)
+  module = get_module(example.name)
+  main_filename = os.path.basename(module.__file__)
   with me.box(
     style=me.Style(
       flex_grow=1,
@@ -515,22 +608,46 @@ def demo_code(code_arg: str):
         background=me.theme_var("background"),
       )
     ):
-      me.text(
-        "Code",
-        style=me.Style(
-          font_weight=500,
-          padding=me.Padding.all(14),
-        ),
-      )
+      if example.extra_files:
+        effective_value = (
+          state.selected_file
+          if state.selected_file in example.extra_files
+          else main_filename
+        )
+        with me.box(
+          style=me.Style(
+            flex_grow=1, overflow_x="hidden", margin=me.Margin(bottom=-21)
+          )
+        ):
+          me.select(
+            options=[
+              me.SelectOption(label=main_filename, value=main_filename),
+              *[
+                me.SelectOption(label=os.path.basename(f), value=f)
+                for f in example.extra_files
+              ],
+            ],
+            value=effective_value,
+            on_selection_change=on_file_select,
+            style=me.Style(
+              width="100%",
+            ),
+          )
+      else:
+        me.text(
+          "Code",
+          style=me.Style(
+            font_weight=500,
+            padding=me.Padding.all(14),
+          ),
+        )
       if not is_desktop():
         swap_button()
+    code, lang = _get_code_for_example(example)
     # Use four backticks for code fence to avoid conflicts with backticks being used
     # within the displayed code.
     me.markdown(
-      f"""````python
-{code_arg}
-````
-              """,
+      f"````{lang}\n{code}\n````",
       style=me.Style(
         border=me.Border(
           right=BORDER_SIDE,
