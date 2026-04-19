@@ -8,6 +8,7 @@ Mesop is designed to be auth provider agnostic. You can integrate any auth libra
 | [Firebase Authentication](#firebase-authentication) | Apps that need social sign-in or multi-provider auth |
 | [Username & Password](#username-and-password) | Simple internal tools or apps with a mix of public and private pages |
 | [HTTP Basic Auth](#http-basic-auth) | Internal tools where a browser pop-up is acceptable and no login UI is needed |
+| [Cookies](#cookies) | Persisting session tokens or structured data across requests (experimental) |
 
 > **Important:** Regardless of which approach you choose, always enforce authorization on the server side in your event handlers. Never rely solely on client-visible state to gate privileged actions. See the [state management security guide](./state-management.md#security-best-practices) for more details.
 
@@ -433,3 +434,199 @@ gunicorn --bind 0.0.0.0:8080 'your_module:app'
 - Store only hashed passwords, never plaintext.
 - Never put credentials in source code or committed files. Use your platform's secret management solution — for example [GCP Secret Manager](https://cloud.google.com/secret-manager), [AWS Secrets Manager](https://aws.amazon.com/secrets-manager/), or a `.env` file that is listed in `.gitignore` for local development.
 - Consider combining with an IP allowlist at the network/load-balancer level for extra protection.
+
+---
+
+## Cookies
+
+!!! warning "Experimental"
+    The cookie API is experimental. The interface may change in future releases.
+
+Mesop provides a first-class cookie API so you can persist small pieces of data (session tokens, user preferences, etc.) in the browser without managing raw `Set-Cookie` headers yourself.
+
+!!! note "MESOP_COOKIE_SECRET_KEY required"
+    Set [`MESOP_COOKIE_SECRET_KEY`](../api/config.md#mesop_cookie_secret_key) before starting Mesop:
+
+    ```sh
+    MESOP_COOKIE_SECRET_KEY=your-random-secret mesop main.py
+    ```
+
+    Generate a strong key:
+
+    ```sh
+    python -c "import secrets; print(secrets.token_hex(32))"
+    ```
+
+### How it works
+
+Mesop event handlers run inside a streaming response (SSE or WebSockets). HTTP response headers — including `Set-Cookie` — are committed to the client *before* the event-handler body executes, so cookies cannot be set directly on the handler response. Instead, cookies are applied via a lightweight two-step protocol:
+
+1. Your event handler calls `me.set_cookie()`.
+2. Mesop encodes the pending cookie operations into a short-lived itsdangerous-signed token and sends an `ApplyCookiesCommand` to the browser.  Any server worker that holds the same [`MESOP_COOKIE_SECRET_KEY`](../api/config.md#mesop_cookie_secret_key) can verify and redeem the token.
+3. The Mesop client POSTs the token to `/__apply-cookies`, which verifies the signature, marks the token's nonce as used (single-use within a process), and responds with the `Set-Cookie` headers.
+
+This is transparent to your application code.
+
+### `@me.cookieclass` — structured cookies
+
+The recommended API is `@me.cookieclass`, which works like `@me.stateclass` but for cookies.  Fields are JSON-serialised automatically.
+
+```python
+import mesop as me
+
+@me.cookieclass
+class SessionCookie:
+    username: str = ""
+    role: str = "guest"
+```
+
+#### Reading a cookie
+
+Call `me.cookie(SessionCookie)` inside `on_load` or any event handler.  If the cookie is absent or unparseable, a fresh default instance is returned — no exception is raised.
+
+```python
+def on_load(e: me.LoadEvent):
+    session = me.cookie(SessionCookie)
+    if session.username:
+        state = me.state(State)
+        state.logged_in = True
+        state.username = session.username
+```
+
+#### Writing / updating a cookie
+
+Pass a cookieclass instance to `me.set_cookie()`.  The cookie name is derived from the class, and the fields are JSON-serialised automatically.
+
+```python
+def on_login(e: me.ClickEvent):
+    me.set_cookie(
+        SessionCookie(username="alice", role="admin"),
+        max_age=3600,   # seconds; omit for a session cookie
+    )
+```
+
+When `secure` is omitted it auto-detects HTTPS — so the same code works in local HTTP development and in production HTTPS deployments without any extra configuration.
+
+#### Deleting a cookie
+
+```python
+def on_logout(e: me.ClickEvent):
+    me.delete_cookie(SessionCookie)   # pass the class, not a string
+```
+
+#### Full login / logout example
+
+```python
+import mesop as me
+
+@me.cookieclass
+class SessionCookie:
+    username: str = ""
+
+@me.stateclass
+class State:
+    logged_in: bool = False
+    username: str = ""
+
+def on_load(e: me.LoadEvent):
+    session = me.cookie(SessionCookie)
+    if session.username:
+        state = me.state(State)
+        state.logged_in = True
+        state.username = session.username
+
+@me.page(path="/", on_load=on_load)
+def page():
+    state = me.state(State)
+    if state.logged_in:
+        me.text(f"Logged in as: {state.username}")
+        me.button("Log out", on_click=on_logout)
+    else:
+        me.text("Not logged in.")
+        me.button("Log in as Alice", on_click=on_login)
+
+def on_login(e: me.ClickEvent):
+    state = me.state(State)
+    state.logged_in = True
+    state.username = "alice"
+    me.set_cookie(SessionCookie(username="alice"), max_age=3600)
+
+def on_logout(e: me.ClickEvent):
+    state = me.state(State)
+    state.logged_in = False
+    state.username = ""
+    me.delete_cookie(SessionCookie)
+```
+
+### Signed and encrypted cookies
+
+By default `@me.cookieclass` stores the JSON value in plain text — readable in browser DevTools.  For cookies that carry sensitive data you can add tamper-protection or full encryption by setting `signed=True` or `encrypted=True` on the decorator.
+
+| Option | Protection | Contents visible? | Extra dependency |
+|---|---|---|---|
+| *(default)* | None | Yes (plain JSON) | — |
+| `signed=True` | HMAC — tampering detected on read | Yes (Base64) | — |
+| `encrypted=True` | Fernet — contents hidden | No | `pip install cryptography` |
+
+```python
+# Tamper-proof — contents still visible in DevTools, but any modification
+# is detected and the cookie is silently discarded on the next read.
+@me.cookieclass(signed=True)
+class SessionCookie:
+    username: str = ""
+
+# Fully encrypted — contents hidden; requires pip install cryptography.
+@me.cookieclass(encrypted=True)
+class SessionCookie:
+    username: str = ""
+```
+
+The read (`me.cookie()`) and write (`me.set_cookie()`) calls are identical regardless of the protection level — the signing or encryption is applied transparently.
+
+### Low-level API
+
+If you need full control over the cookie name and value format — for example when storing an opaque session token generated by an external library — use `me.set_cookie()` with explicit string arguments.
+
+> **When to use which form:** prefer the cookieclass form for structured data.  Use the low-level form only for raw opaque values.
+
+#### `me.cookie()`
+
+```python
+token = me.cookie("session_id")         # low-level: raw string value (or "" if absent)
+session = me.cookie(SessionCookie)      # high-level: typed cookieclass instance
+```
+
+#### `me.set_cookie()`
+
+```python
+# Low-level: explicit name + raw string value.
+me.set_cookie(
+    "session_id",
+    "abc123",
+    max_age=3600,        # None → session cookie
+    path="/",
+    domain=None,         # None → current domain
+    secure=None,         # None → auto-detect HTTPS (recommended default)
+    httponly=True,       # hidden from JavaScript
+    samesite="Lax",      # "Lax" | "Strict" | "None"
+)
+
+# High-level: cookieclass instance — name and serialisation handled automatically.
+me.set_cookie(SessionCookie(username="alice"), max_age=3600)
+```
+
+#### `me.delete_cookie()`
+
+```python
+me.delete_cookie("session_id")      # low-level: explicit string name
+me.delete_cookie(SessionCookie)     # high-level: class lookup
+```
+
+### Security notes
+
+- **`httponly=True` (default):** The cookie is not accessible to JavaScript, which mitigates XSS-based session theft.  It is still visible in browser DevTools.
+- **`secure=None` (default):** Auto-detects HTTPS — `True` in production, `False` on local HTTP.  Pass `secure=True` to enforce HTTPS-only regardless of environment.
+- **`samesite="Lax"` (default):** Protects against most CSRF attacks.  Use `"Strict"` for additional protection at the cost of some UX friction on cross-site navigations.
+- **Cookie value size:** Browsers limit individual cookies to ~4 KB.  Use server-side session storage (database, Redis, etc.) for larger payloads and store only an opaque session ID in the cookie.
+- **Sensitive data:** Use `@me.cookieclass(encrypted=True)` to hide cookie contents, or store only an opaque token and keep sensitive data server-side.
+- **Cookie value visibility during apply:** When `me.set_cookie()` is called, the pending cookie values are embedded in the `ApplyCookiesCommand` token that passes through browser JavaScript before being POSTed to `/__apply-cookies`.  The token is HMAC-signed but not encrypted, so the values are Base64-readable in that brief window.  For cookies that must never be visible to JavaScript (e.g. an `httponly` session token whose raw value is sensitive), use `@me.cookieclass(encrypted=True)` — the value is Fernet-encrypted before it ever leaves the server, so the token carries only ciphertext.

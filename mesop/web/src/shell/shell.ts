@@ -46,6 +46,7 @@ import {
 } from '../services/error_dialog_service';
 import {MatDialog} from '@angular/material/dialog';
 import {ExperimentService} from '../services/experiment_service';
+import {prefixBasePath} from '../utils/base_path';
 // Keep the following comment to ensure there's a hook for adding TS imports in the downstream sync.
 // ADD_TS_IMPORT_HERE
 
@@ -243,6 +244,30 @@ export class Shell {
             updateUrlFromQueryParam(
               command.getUpdateQueryParam()!.getQueryParam()!,
             );
+          } else if (command.hasApplyCookies()) {
+            const token = command.getApplyCookies()!.getToken();
+            if (token == null || token.trim() === '') {
+              throw new Error('ApplyCookies: token is missing or empty');
+            }
+            // POST the token in the request body (not the URL) to keep it out
+            // of server access logs and browser history. Set-Cookie headers on
+            // the response are processed automatically by the browser.
+            const body = new URLSearchParams();
+            body.set('t', token);
+            const applyResp = await fetch(prefixBasePath('/__apply-cookies'), {
+              method: 'POST',
+              credentials: 'same-origin',
+              cache: 'no-store',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: body.toString(),
+            });
+            if (!applyResp.ok) {
+              throw new Error(
+                `ApplyCookies request failed with status ${applyResp.status}`,
+              );
+            }
           } else {
             throw new Error(
               `Unhandled command: ${command.getCommandCase().toString()}`,

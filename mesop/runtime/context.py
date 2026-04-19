@@ -3,8 +3,9 @@ import logging
 import threading
 import types
 import urllib.parse as urlparse
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Generator, Sequence, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 import mesop.protos.ui_pb2 as pb
 from mesop.dataclass_utils import (
@@ -25,6 +26,31 @@ T = TypeVar("T")
 Handler = Callable[[Any], Generator[None, None, None] | None]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PendingCookie:
+  """Represents a cookie to be set or deleted via the /__apply-cookies endpoint.
+
+  Attributes:
+    name: Cookie name.
+    value: Cookie value. Empty string when deleting.
+    max_age: Max age in seconds. None means session cookie. 0 means delete.
+    path: Cookie path scope.
+    domain: Cookie domain scope. None means current domain.
+    secure: Whether the cookie should only be sent over HTTPS.
+    httponly: Whether the cookie should be inaccessible to JavaScript.
+    samesite: SameSite policy: "Strict", "Lax", or "None".
+  """
+
+  name: str
+  value: str = ""
+  max_age: int | None = None
+  path: str = "/"
+  domain: str | None = None
+  secure: bool = True
+  httponly: bool = True
+  samesite: str = "Lax"
 
 
 @dataclass(kw_only=True)
@@ -127,6 +153,7 @@ class Context:
     self._theme_settings: pb.ThemeSettings | None = None
     self._js_modules: set[str] = set()
     self._query_params: dict[str, list[str]] = {}
+    self._pending_cookies: list[PendingCookie] = []
     if MESOP_WEBSOCKETS_ENABLED:
       self._lock = threading.Lock()
 
@@ -241,6 +268,71 @@ class Context:
       pb.Command(set_page_title=pb.SetPageTitle(title=title))
     )
 
+  def set_cookie(
+    self,
+    name: str,
+    value: str,
+    *,
+    max_age: int | None = None,
+    path: str = "/",
+    domain: str | None = None,
+    secure: bool = True,
+    httponly: bool = True,
+    samesite: str = "Lax",
+  ) -> None:
+    _VALID_SAMESITE = ("Strict", "Lax", "None")
+    if samesite not in _VALID_SAMESITE:
+      raise MesopDeveloperException(
+        f"Invalid samesite value '{samesite}'. Must be one of: {', '.join(_VALID_SAMESITE)}."
+      )
+    if samesite == "None" and not secure:
+      raise MesopDeveloperException(
+        "samesite='None' requires secure=True (SameSite=None cookies must be Secure per RFC 6265bis)."
+      )
+    self._pending_cookies.append(
+      PendingCookie(
+        name=name,
+        value=value,
+        max_age=max_age,
+        path=path,
+        domain=domain,
+        secure=secure,
+        httponly=httponly,
+        samesite=samesite,
+      )
+    )
+
+  def delete_cookie(
+    self,
+    name: str,
+    *,
+    path: str = "/",
+    domain: str | None = None,
+    secure: bool = False,
+  ) -> None:
+    # secure=False by default: deletion cookies (Max-Age=0) must be visible
+    # to the browser regardless of protocol so it can expire the original
+    # cookie.  Browsers match cookies by name/path/domain, not the Secure
+    # attribute, so a non-Secure deletion header correctly expires a Secure
+    # cookie.  The caller (set_cookie.delete_cookie) passes the auto-detected
+    # value from _resolve_secure so HTTPS deployments still get Secure=True.
+    self._pending_cookies.append(
+      PendingCookie(
+        name=name,
+        value="",
+        max_age=0,
+        path=path,
+        domain=domain,
+        secure=secure,
+      )
+    )
+
+  def pending_cookies(self) -> tuple[PendingCookie, ...]:
+    return tuple(self._pending_cookies)
+
+  def clear_pending_cookies(self) -> None:
+    self._pending_cookies = []
+
   def set_theme_density(self, density: int) -> None:
     self._commands.append(
       pb.Command(set_theme_density=pb.SetThemeDensity(density=density))
@@ -335,7 +427,7 @@ Did you forget to decorate your state class `{state.__name__}` with @stateclass?
   def diff_state(self) -> pb.States:
     states = pb.States()
     for state, previous_state in zip(
-      self._states.values(), self._previous_states.values()
+      self._states.values(), self._previous_states.values(), strict=False
     ):
       states.states.append(pb.State(data=diff_state(previous_state, state)))
     return states
@@ -358,7 +450,10 @@ Did you forget to decorate your state class `{state.__name__}` with @stateclass?
 
   def update_state(self, states: pb.States) -> None:
     for state, previous_state, proto_state in zip(
-      self._states.values(), self._previous_states.values(), states.states
+      self._states.values(),
+      self._previous_states.values(),
+      states.states,
+      strict=False,
     ):
       update_dataclass_from_json(state, proto_state.data)
       update_dataclass_from_json(previous_state, proto_state.data)

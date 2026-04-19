@@ -1,16 +1,20 @@
 import base64
+import dataclasses
 import logging
+import os
 import secrets
 import threading
+import time
 import types
+from collections.abc import Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Generator, Sequence
 
 from flask import (
   Flask,
   Response,
   abort,
   copy_current_request_context,
+  make_response,
   request,
   stream_with_context,
 )
@@ -26,8 +30,9 @@ from mesop.env.env import (
   MESOP_WEBSOCKETS_ENABLED,
 )
 from mesop.events import LoadEvent
-from mesop.exceptions import format_traceback
+from mesop.exceptions import MesopDeveloperException, format_traceback
 from mesop.runtime import runtime
+from mesop.runtime.context import PendingCookie
 from mesop.server.constants import WEB_COMPONENTS_PATH_SEGMENT
 from mesop.server.server_debug_routes import configure_debug_routes
 from mesop.server.server_utils import (
@@ -45,8 +50,106 @@ from mesop.utils.url_utils import remove_url_query_param
 from mesop.warn import warn
 
 UI_PATH = prefix_base_url("/__ui__")
+APPLY_COOKIES_PATH = prefix_base_url("/__apply-cookies")
 
 logger = logging.getLogger(__name__)
+
+_COOKIE_TOKEN_TTL_SECONDS = 60
+
+
+def _get_cookie_secret_key() -> str:
+  """Return MESOP_COOKIE_SECRET_KEY, raising MesopDeveloperException if unset."""
+  key = os.environ.get("MESOP_COOKIE_SECRET_KEY", "")
+  if not key:
+    raise MesopDeveloperException(
+      "MESOP_COOKIE_SECRET_KEY must be set to use Mesop cookies.\n"
+      "Set it as an environment variable before starting Mesop:\n"
+      "  MESOP_COOKIE_SECRET_KEY=<your-secret> mesop main.py\n"
+      "Generate a strong key with:\n"
+      '  python -c "import secrets; print(secrets.token_hex(32))"'
+    )
+  return key
+
+
+class _CookieTokenCache:
+  """Self-contained itsdangerous-signed cookie token store.
+
+  Each token is an itsdangerous-signed blob containing the pending cookies
+  plus a one-time nonce.  Because the token carries all the data, any
+  server replica that holds the same MESOP_COOKIE_SECRET_KEY can verify
+  and redeem it — multi-worker deployments work without sticky sessions
+  (unlike the previous ``MESOP_STATE_SESSION_BACKEND=none`` limitation,
+  which required sticky sessions for state; here no sticky sessions are
+  needed at all).
+
+  **Single-use enforcement:** consumed nonces are tracked per-process in a
+  small in-memory set bounded by the TTL window.  Within a single process
+  replays are rejected strictly.  Across multiple workers, a token *could*
+  theoretically be replayed to a different worker that has not yet seen the
+  nonce, but the CSRF Origin check on ``/__apply-cookies`` and HTTPS in
+  production make this impractical.
+
+  **Note on value visibility:** the payload is signed, not encrypted, so
+  cookie values are Base64-visible in the token as it passes through browser
+  JavaScript.  For complete value privacy use ``@me.cookieclass(encrypted=True)``
+  which Fernet-encrypts the value before it ever leaves the server.
+  """
+
+  def __init__(self) -> None:
+    self._lock = threading.Lock()
+    self._used_nonces: dict[str, float] = {}  # nonce -> expiry (monotonic)
+
+  def put(self, cookies: list[PendingCookie]) -> str:
+    """Sign and return a self-contained token encoding *cookies*."""
+    from itsdangerous import URLSafeTimedSerializer
+
+    payload = {
+      "n": secrets.token_urlsafe(16),
+      "c": [dataclasses.asdict(c) for c in cookies],
+    }
+    return URLSafeTimedSerializer(
+      _get_cookie_secret_key(), salt="mesop-apply-cookies"
+    ).dumps(payload)
+
+  def pop(self, token: str) -> list[PendingCookie] | None:
+    """Verify *token*, mark its nonce used, and return the cookie list.
+
+    Returns ``None`` if the token is invalid, expired, or already consumed.
+    """
+    from itsdangerous import (
+      BadSignature,
+      SignatureExpired,
+      URLSafeTimedSerializer,
+    )
+
+    try:
+      payload = URLSafeTimedSerializer(
+        _get_cookie_secret_key(), salt="mesop-apply-cookies"
+      ).loads(token, max_age=_COOKIE_TOKEN_TTL_SECONDS)
+    except (BadSignature, SignatureExpired):
+      return None
+
+    nonce = payload.get("n", "")
+    with self._lock:
+      if nonce in self._used_nonces:
+        return None
+      self._used_nonces[nonce] = time.monotonic() + _COOKIE_TOKEN_TTL_SECONDS
+      self._evict_used_locked()
+
+    try:
+      return [PendingCookie(**c) for c in payload["c"]]
+    except (TypeError, KeyError):
+      return None
+
+  def _evict_used_locked(self) -> None:
+    """Discard expired nonce entries. Must be called with self._lock held."""
+    now = time.monotonic()
+    expired = [k for k, exp in self._used_nonces.items() if now > exp]
+    for k in expired:
+      del self._used_nonces[k]
+
+
+_cookie_token_cache = _CookieTokenCache()
 
 
 def _process_on_load_result(result) -> Generator[None, None, None]:
@@ -99,6 +202,17 @@ def configure_flask_app(
     # callers to spoof X-Forwarded-* headers and bypass origin checks.
     flask_app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
       flask_app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1
+    )
+
+  def maybe_append_apply_cookies_command() -> None:
+    """If the context has pending cookies, cache them and append an ApplyCookiesCommand."""
+    pending = runtime().context().pending_cookies()
+    if not pending:
+      return
+    token = _cookie_token_cache.put(list(pending))
+    runtime().context().clear_pending_cookies()
+    runtime().context().commands().append(
+      pb.Command(apply_cookies=pb.ApplyCookiesCommand(token=token))
     )
 
   def render_loop(
@@ -207,10 +321,12 @@ def configure_flask_app(
           # the generator object. This also handles async generators and coroutines.
           if result:
             for _ in _process_on_load_result(result):
+              maybe_append_apply_cookies_command()
               yield from render_loop(path=ui_request.path, init_request=True)
               runtime().context().set_previous_node_from_current_node()
               runtime().context().reset_current_node()
           else:
+            maybe_append_apply_cookies_command()
             yield from render_loop(path=ui_request.path, init_request=True)
         else:
           yield from render_loop(path=ui_request.path, init_request=True)
@@ -262,6 +378,7 @@ def configure_flask_app(
 
         result = runtime().context().run_event_handler(ui_request.user_event)
         for _ in result:
+          maybe_append_apply_cookies_command()
           navigate_commands = [
             command
             for command in runtime().context().commands()
@@ -297,6 +414,8 @@ def configure_flask_app(
           yield from render_loop(path=path)
           runtime().context().set_previous_node_from_current_node()
           runtime().context().reset_current_node()
+        # Flush any cookies queued by a generator handler that yielded 0 times.
+        maybe_append_apply_cookies_command()
         if not MESOP_WEBSOCKETS_ENABLED:
           yield create_update_state_event(diff=True)
         yield STREAM_END
@@ -306,6 +425,10 @@ def configure_flask_app(
     except Exception as e:
       if e in exceptions_to_propagate:
         raise e
+      # Clear any pending cookies queued by the failing handler so they do
+      # not leak into the next event cycle.  This matters most in WebSockets
+      # mode where the Context is long-lived across multiple requests.
+      runtime().context().clear_pending_cookies()
       yield from yield_errors(
         error=pb.ServerError(exception=str(e), traceback=format_traceback())
       )
@@ -318,6 +441,7 @@ def configure_flask_app(
     # the generator object. This also handles async generators and coroutines.
     if result:
       for _ in _process_on_load_result(result):
+        maybe_append_apply_cookies_command()
         yield from render_loop(path=path, init_request=True)
         runtime().context().set_previous_node_from_current_node()
         runtime().context().reset_current_node()
@@ -341,6 +465,47 @@ def configure_flask_app(
 
     response = make_sse_response(stream_with_context(generate_data(ui_request)))
     return response
+
+  @flask_app.route(APPLY_COOKIES_PATH, methods=["POST"])
+  def apply_cookies() -> Response:
+    """Endpoint that sets cookies previously queued by me.set_cookie().
+
+    The Mesop client POSTs the token in the request body (not the URL) to keep
+    it out of server access logs and browser history.  The token expires after
+    _COOKIE_TOKEN_TTL_SECONDS seconds and is enforced as single-use within a
+    given server process (used nonces are tracked in memory).  In multi-worker
+    deployments, a replay routed to a different worker may still succeed;
+    the CSRF Origin check and short TTL reduce that risk in practice.
+
+    Same-site origin validation (matching ui_stream) prevents a cross-site
+    attacker from replaying a valid token against a victim's browser.
+    """
+    if not runtime().debug_mode and not is_same_site(
+      request.headers.get("Origin"), request.url_root
+    ):
+      abort(403, "Rejecting cross-site POST request to " + APPLY_COOKIES_PATH)
+    token = request.form.get("t", "")
+    if not token:
+      abort(400, "Missing token")
+    pending: list[PendingCookie] | None = _cookie_token_cache.pop(token)
+    if pending is None:
+      abort(400, "Invalid or expired token")
+
+    resp = make_response("", 204)
+    # Prevent intermediary caching of this tokenised response.
+    resp.headers["Cache-Control"] = "no-store"
+    for cookie in pending:
+      resp.set_cookie(
+        cookie.name,
+        cookie.value,
+        max_age=cookie.max_age,
+        path=cookie.path,
+        domain=cookie.domain,
+        secure=cookie.secure,
+        httponly=cookie.httponly,
+        samesite=cookie.samesite,
+      )
+    return resp
 
   @flask_app.teardown_request
   def teardown_clear_stale_state_sessions(error=None):
