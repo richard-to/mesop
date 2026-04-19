@@ -35,13 +35,14 @@ echo "Updating allowed iframe parents to include hugging face spaces site..."
 # Find all .py files and update the allowed_iframe_parents list
 find . -name "*.py" -type f | while read -r file; do
     # Use sed with -i.bak so it woroks on MacOs
-    sed -i.bak 's/allowed_iframe_parents=\["https:\/\/google\.github\.io"\]/allowed_iframe_parents=["https:\/\/mesop-dev.github.io", "https:\/\/huggingface.co"]/' "$file"
+    sed -i.bak 's/allowed_iframe_parents=\["https:\/\/mesop-dev\.github\.io"\]/allowed_iframe_parents=["https:\/\/mesop-dev.github.io", "https:\/\/huggingface.co"]/' "$file"
     # Remove the backup file created by sed
     rm "${file}.bak"
 done
 echo "Update complete."
 
 git init
+git push --set-upstream hf main
 
 git add .
 
@@ -49,8 +50,8 @@ git commit -m "Commit"
 
 # The hf remote may already exist if the script has been run
 # on this dest directory before.
-git remote add hf https://huggingface.co/spaces/wwwillchen/mesop || true
+git remote add hf git@hf.co:spaces/richard-to/mesop || true
 
-git push hf --force
+git push hf main --force
 
-echo "Pushed to: https://huggingface.co/spaces/wwwillchen/mesop. Check the logs to see that it's deployed correctly."
+echo "Pushed to: git@hf.co:spaces/richard-to/mesop. Check the logs to see that it's deployed correctly."
