@@ -44,6 +44,10 @@ echo "Update complete."
 git init
 git push --set-upstream hf main
 
+# Hugging face stores images using xet. Need to track the images for them to be uploaded.
+git lfs track "screenshots/*.webp"
+git lfs track "screenshots/*.png"
+
 git add .
 
 git commit -m "Commit"
