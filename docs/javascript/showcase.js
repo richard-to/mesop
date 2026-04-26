@@ -1,1 +1,1 @@
-window.location.href = 'https://wwwillchen-mesop-showcase.hf.space/';
+window.location.href = 'https://richard-to-mesop-showcase.hf.space/';
