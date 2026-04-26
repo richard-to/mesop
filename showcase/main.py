@@ -471,7 +471,7 @@ def card(resource: Resource):
             letter_spacing="0.2px",
           ),
         )
-      me.text(resource.description, style=me.Style(height=65, font_size=15))
+      me.text(resource.description, style=me.Style(height=85, font_size=15))
     with me.box(
       style=me.Style(
         display="flex",
